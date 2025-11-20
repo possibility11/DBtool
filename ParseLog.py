@@ -21,10 +21,10 @@ import zipfile
 import shutil
 from pathlib import Path
 
+
 def rename_db_folders_with_timestamp(base_path):
     """
     重命名以"db."开头的文件夹，添加时间戳后缀
-    
     Args:
         base_path: 要搜索的基路径
     """
@@ -38,6 +38,7 @@ def rename_db_folders_with_timestamp(base_path):
             # 构建新名称
             new_name = f"{item}_{timestamp}"
             new_path = os.path.join(base_path, new_name)
+
             try:
                 # 重命名文件夹
                 os.rename(item_path, new_path)
@@ -46,61 +47,7 @@ def rename_db_folders_with_timestamp(base_path):
                 print(f"重命名文件夹 {item} 失败: {str(e)}")
 
 
-def pull_DBlog1(local_base_path, remote_base_path):
-    try:
-        # 获取当前设备id
-        output = subprocess.check_output('adb devices').decode().splitlines()
-        if len(output) < 2:
-            print("未找到连接的Android设备")
-            return False
-        device_id = output[1].split('\t')[0]
-        if not device_id:
-            print("未找到连接的Android设备")
-            return False
-
-        # 确保本地目录存在
-        if not os.path.exists(local_base_path):
-            os.makedirs(local_base_path)
-        # ADB root和remount
-        subprocess.run('adb root', check=True, shell=True)
-        time.sleep(1)
-        subprocess.run('adb remount', check=True, shell=True)
-        time.sleep(1)
-        # 获取远程目录下所有db.开头的文件夹
-        find_folder_cmd = f'adb -s {device_id} shell find {remote_base_path} -name "db.*" -type d'
-        output = subprocess.check_output(find_folder_cmd, shell=True).decode().splitlines()
-        remote_folders = {}
-        for folder_path in output:
-            folder_path = folder_path.strip()
-            if not folder_path:
-                continue
-        # 获取文件夹的修改时间
-        time_cmd = f'adb -s {device_id} shell stat -c %Y {folder_path}'
-        try:
-            modify_time = subprocess.check_output(time_cmd, shell=True).decode().strip()
-            folder_name = os.path.basename(folder_path)
-            remote_folders[folder_name] = {
-                'path': folder_path,
-                'modify_time': int(modify_time)
-            }
-        except:
-            print(f"获取文件夹修改时间失败: {folder_path}")
-            continue
-        # 遍历远程文件夹，只拉取新增或修改过的文件夹
-        for folder_name, folder_info in remote_folders.items():
-            remote_modify_time = folder_info['modify_time']
-            remote_path = folder_info['path']
-            # 检查是否已经拉取过
-            if folder_name in local_folders:
-                local_modify_time = local_folders[folder_name]
-                # 如果远程文件夹修改时间早于或等于本地记录的时间，跳过
-                if remote_modify_time <= local_modify_time:
-                    print(f"跳过已拉取的文件夹: {folder_name}")
-                    continue
-
-
-
-def pull_DBlog(local_base_path, remote_base_path):
+def pull_DBlog_old(local_base_path, remote_base_path):
     """
     通过ADB从Android设备拉取日志，只拉取新增或修改过的文件。
     拉取完成后，对本地以"db."开头的文件夹加上时间戳后缀进行重命名。
@@ -108,6 +55,7 @@ def pull_DBlog(local_base_path, remote_base_path):
     try:
         # 获取当前设备id
         output = subprocess.check_output('adb devices').decode().splitlines()
+        print(output)
         if len(output) < 2:
             print("未找到连接的Android设备")
             return False
@@ -118,12 +66,8 @@ def pull_DBlog(local_base_path, remote_base_path):
         # cur_path = os.getcwd()
         # local_base_path = os.path.join(cur_path, 'DBfile/android')
         # remote_base_path = '/log/android/aee_exp'
-        
         # 确保本地目录存在
-        if not os.path.exists(local_base_path):
-            os.makedirs(local_base_path)
-        #os.makedirs(local_base_path, exist_ok=True) # 创建目录
-        
+        os.makedirs(local_base_path, exist_ok=True)
         # ADB root和remount
         subprocess.run('adb root', check=True, shell=True)
         time.sleep(1)
@@ -134,33 +78,37 @@ def pull_DBlog(local_base_path, remote_base_path):
         # 使用adb shell find命令递归获取文件信息
         find_cmd = f'adb -s {device_id} shell find {remote_base_path} -type f -exec ls -l {{}} \\;'
         output = subprocess.check_output(find_cmd, shell=True).decode().splitlines()
-
         for line in output:
             parts = line.split()
             if len(parts) < 6:
                 continue
             # 文件大小和路径
-            size = parts[4] # 提取文件大小（第5个字段）
-            #print(size)
-            # remote_file_path = ' '.join(parts[5:])
-            remote_file_path = ' '.join(parts[7:]) # 提取文件完整路径
-            relative_path = os.path.relpath(remote_file_path, remote_base_path) # 计算相对于基路径的相对路径
-            remote_files[relative_path] = size #将相对路径和文件大小存入字典
-            #print(remote_files)
+            size = parts[4]
+            remote_file_path = ' '.join(parts[7:])
+            relative_path = os.path.relpath(remote_file_path, remote_base_path)
+            relative_path = relative_path.replace(os.sep, '/')
+            print(relative_path)
+            remote_files[relative_path] = size
 
-        # 遍历远程文件列表，检查本地是否存在对应文件,如果本地不存在或文件大小不同，则创建本地目录并拉取文件
+        # 遍历远程文件列表，检查是否需要拉取
         for relative_path, remote_size in remote_files.items():
             local_file_path = os.path.join(local_base_path, relative_path)
+            local_file_path = local_file_path.replace(os.sep, '/')
+            print("=====================================================")
+            print(local_file_path)
+            print(remote_size)
             remote_file_path = os.path.join(remote_base_path, relative_path)
             # 如果本地不存在该文件，或者文件大小不同，则拉取
-            if not os.path.exists(local_file_path) or os.path.getsize(local_file_path) != int(remote_size):
+            if not os.path.exists(local_file_path) and os.path.getsize(local_file_path) != int(remote_size):
+                time.sleep(5)
                 # 确保本地目录存在
                 os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
                 # 拉取单个文件
                 pull_cmd = f'adb -s {device_id} pull {remote_file_path} {local_file_path}'
-                subprocess.run(pull_cmd, check=True, shell=True)
+                subprocess.run(pull_cmd)
+                # subprocess.run(pull_cmd, check=True, shell=True)
                 print(f"拉取文件: {relative_path}")
-        print("Android日志拉取完成!")
+
         # 重命名以"db."开头的文件夹，添加时间戳后缀
         rename_db_folders_with_timestamp(local_base_path)
         return True
@@ -170,6 +118,129 @@ def pull_DBlog(local_base_path, remote_base_path):
     except Exception as e:
         print(f"发生未知错误: {str(e)}")
         return False
+
+
+def pull_DBlog(local_base_path, remote_base_path):
+    """
+       通过ADB从Android设备拉取日志，只拉取新生成的文件夹。
+       通过比较远程文件夹的生成时间与本地记录的时间来判断是否需要拉取。
+       """
+    try:
+        # 获取当前设备id
+        output = subprocess.check_output('adb devices').decode().splitlines()
+        if len(output) < 2:
+            print("未找到连接的Android设备")
+            return False
+        device_id = output[1].split('\t')[0]
+        if not device_id:
+            print("未找到连接的Android设备")
+            return False
+            # 确保本地目录存在
+        if not os.path.exists(local_base_path):
+            os.makedirs(local_base_path)
+        ##################################################################################
+        # ADB root和remount
+        # subprocess.run('adb root', check=True, shell=True)
+        # time.sleep(1)
+        # subprocess.run('adb remount', check=True, shell=True)
+        # time.sleep(1)
+        ##################################################################################
+        # 获取远程目录下所有db.开头的文件夹
+        find_folder_cmd = f'adb -s {device_id} shell find {remote_base_path} -name "db.*" -type d'
+        output = subprocess.check_output(find_folder_cmd, shell=True).decode().splitlines()
+
+        # print(output)
+        # 获取本地已拉取文件夹的最新时间戳
+        latest_local_time = 0
+        for item in os.listdir(local_base_path):
+            item_path = os.path.join(local_base_path, item)
+            if os.path.isdir(item_path) and item.startswith("db."):
+                # 从文件夹名中提取时间戳（如果有）
+                match = re.search(r'db\.\w+\.\w+_(\d{8}_\d{6})', item)
+                if match:
+                    timestamp_str = match.group(1)
+                    try:
+                        # 将时间戳转换为Unix时间戳
+                        dt = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+                        folder_time = int(dt.timestamp())
+                        if folder_time > latest_local_time:
+                            latest_local_time = folder_time
+                    except:
+                        continue
+        # 遍历远程文件夹，只拉取生成时间晚于本地最新时间戳的文件夹
+        new_folders = []
+        for folder_path in output:
+            folder_path = folder_path.strip()
+            # print(folder_path)
+            if not folder_path:
+                continue
+            # 获取文件夹的创建时间
+            ls_cmd = f'adb -s {device_id} shell ls -ld "{folder_path}"'
+            try:
+                ls_output = subprocess.check_output(ls_cmd, shell=True).decode().strip()
+                # print(ls_output)
+                # 解析ls输出获取时间信息
+                parts = ls_output.split()
+                if len(parts) >= 6:
+                    # 提取日期和时间部分
+                    date_str = parts[5]
+                    time_str = parts[6]
+                    # 如果是当前年份，日期格式为"MM-DD"，否则为"YYYY-MM-DD"
+                    if '-' in date_str and len(date_str) == 5:  # MM-DD格式
+                        current_year = datetime.now().year
+                        date_str = f"{current_year}-{date_str}"
+                    # 将日期时间字符串转换为datetime对象
+                    dt_str = f"{date_str} {time_str}"
+                    dt_obj = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
+                    folder_time = int(dt_obj.timestamp())
+                    # print("================================================================")
+
+                    # 如果文件夹创建时间晚于本地最新时间戳，则标记为新文件夹
+                    if folder_time > latest_local_time:
+                        folder_name = os.path.basename(folder_path)
+                        new_folders.append({
+                            'path': folder_path,
+                            'name': folder_name,
+                            'modify_time': folder_time,
+                            'timestamp_str': dt_obj.strftime("%Y%m%d_%H%M%S")
+                        })
+                        print(f"发现新文件夹: {folder_name}, 创建时间: {dt_str}")
+            except Exception as e:
+                print(f"获取文件夹信息失败: {folder_path}, 错误: {str(e)}")
+                continue
+
+        # 拉取新文件夹
+        for folder_info in new_folders:
+            folder_path = folder_info['path']
+            folder_name = folder_info['name']
+            # 拉取整个文件夹
+            local_folder_path = os.path.join(local_base_path, folder_name)
+            pull_cmd = f'adb -s {device_id} pull {folder_path} {local_folder_path}'
+            try:
+                print(f"开始拉取文件夹: {folder_name}")
+                subprocess.run(pull_cmd, check=True, shell=True)
+                # 拉取成功后，为文件夹添加时间戳
+                # timestamp = time.strftime("%Y%m%d_%H%M%S")
+                timestamp = folder_info['timestamp_str']
+                new_folder_name = f"{folder_name}_{timestamp}"
+                new_folder_path = os.path.join(local_base_path, new_folder_name)
+                os.rename(local_folder_path, new_folder_path)
+                print(f"已拉取并重命名文件夹: {folder_name} -> {new_folder_name}")
+            except subprocess.CalledProcessError as e:
+                print(f"拉取文件夹失败 {folder_name}: {e}")
+        if new_folders:
+            print(f"DB日志拉取完成! 共拉取 {len(new_folders)} 个新文件夹")
+        else:
+            print("没有发现新文件夹需要拉取")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"DB日志拉取失败: {e}")
+        return False
+    except Exception as e:
+        print(f"发生未知错误: {str(e)}")
+        return False
+
+
 def pull_logacat():
     cur_path = os.getcwd()  # 当前目录
     # 获取设备上的日志文件列表（包括完整路径）
@@ -213,19 +284,22 @@ def pull_logacat():
         else:
             print(f"导出成功: {device_file}")
 
+
 def parse_DB():
-    GAT_BIN = pathlib.Path('gat-win32-x86_64-4/modules/spsst/tools/aee_db_extract/aee_extract.exe').resolve() # GAT二进制文件
+    GAT_BIN = pathlib.Path(
+        'gat-win32-x86_64-4/modules/spsst/tools/aee_db_extract/aee_extract.exe').resolve()  # GAT二进制文件
     print(GAT_BIN)
     cur_path = os.getcwd()  # 当前目录
-    base_path = os.path.join(cur_path, 'DBfile') # DB文件存放目录
-    base_path_obj = pathlib.Path(base_path) # 创建目录对象
-    for dbg in base_path_obj.rglob('*.dbg'): # 遍历当前目录下的所有.dbg文件
-        dec = dbg.with_suffix('.dbg.DEC') # .dbg.DEC文件
-        if dec.exists(): # 如果.dbg.DEC文件已存在，则跳过
+    base_path = os.path.join(cur_path, 'DBfile')  # DB文件存放目录
+    base_path_obj = pathlib.Path(base_path)  # 创建目录对象
+    for dbg in base_path_obj.rglob('*.dbg'):  # 遍历当前目录下的所有.dbg文件
+        dec = dbg.with_suffix('.dbg.DEC')  # .dbg.DEC文件
+        if dec.exists():  # 如果.dbg.DEC文件已存在，则跳过
             continue
         cmd = [str(GAT_BIN), str(dbg)]
         print('>>>', shlex.join(cmd))
         subprocess.run(cmd)
+
 
 def parse_exp_main(file_path):
     results = {
@@ -236,7 +310,7 @@ def parse_exp_main(file_path):
         "PID": None,
         "Subject": None,
         "System": None
-    } 
+    }
     with open(file_path, 'r', encoding='utf-8') as file:
         content = file.read()
         # 检查路径中是否包含"android"
@@ -249,9 +323,9 @@ def parse_exp_main(file_path):
         # 提取Exception Log Time
         log_time_match = re.search(r"Exception Log Time:\[(.*?)\]", content)
         if log_time_match:
-            log_time = datetime.strptime(log_time_match.group(1).strip(),'%a %b %d %H:%M:%S CST %Y')
+            log_time = datetime.strptime(log_time_match.group(1).strip(), '%a %b %d %H:%M:%S CST %Y')
             formatted_time = log_time.strftime("%Y-%m-%d %H:%M:%S")
-            #results["Exception Log Time"] = log_time_match.group(1).strip()
+            # results["Exception Log Time"] = log_time_match.group(1).strip()
             results["Exception Log Time"] = formatted_time
         # 提取Exception Class
         class_match = re.search(r"Exception Class:\s*(.*)", content)
@@ -285,18 +359,20 @@ def parse_exp_main(file_path):
                 results["Subject"] = subject_match.group(1).strip()
     return results
 
-    
 
 if __name__ == '__main__':
     # path = r'D:\390tools\390DBTool\DBfile'
-    #path = r'/log/android/aee_exp'
-    #path = r'D:\390tools\390DBTool\DBfile\android\db.00.NE\db.00.NE.dbg.DEC\__exp_main.txt'
-    #result1 = parse_exp_main(path)
-    #DB = DBLogPpase(path)
-    # local_base_path= r'D:\390tools\390DBTool\g'
-    # remote_base_path = '/data/local/tmp'
-    # pull_DBlog(local_base_path, remote_base_path)
-    base_path = r"C:\Users\94713\Desktop\390_0630\aee_exp"
-    rename_db_folders_with_timestamp(base_path)
+    # path = r'/log/android/aee_exp'
+    # path = r'D:\390tools\390DBTool\DBfile\android\db.00.NE\db.00.NE.dbg.DEC\__exp_main.txt'
+    # result1 = parse_exp_main(path)
+    # cur_path = os.getcwd()
+    # local_base_pathA = os.path.join(cur_path, 'DBfile\\android')
+    local_base_pathA = r'D:/dblog'
+    remote_base_pathA = r'/log/android/aee_exp/'
 
+    success = pull_DBlog(local_base_pathA, remote_base_pathA)
+    if success:
+        print("操作成功完成!")
+    else:
+        print("操作失败!")
 
